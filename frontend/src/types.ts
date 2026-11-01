@@ -1,0 +1,4 @@
+export type Source = 'demo' | 'live';
+export type Reading = { id?: number; timestamp: string; voltage: number; current: number; temperature: number; soc: number; charging: boolean; battery_status: string; operating_mode: string; runtime_minutes: number | null; source: Source };
+export type System = { backend: string; mode: Source; connected: boolean; serial_open: boolean; stale: boolean; last_received: string | null; serial_port: string; baud_rate: number; protocol: string; stale_after_seconds: number; hostname: string; platform: string; persist_demo: boolean; rejected_packets: number; last_error: string | null };
+export type Alert = { id: number; code: string; severity: 'normal' | 'warning' | 'critical'; description: string; timestamp: string; resolved_at: string | null; acknowledged: boolean; source: Source };
