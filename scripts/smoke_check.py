@@ -21,14 +21,14 @@ from app.main import create_app
 
 async def stream(port):
     async with connect(f'ws://127.0.0.1:{port}/ws/battery', origin=f'http://127.0.0.1:{port}') as ws:
-        readings = []
+        readings = {}
         while len(readings) < 2:
             event = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
             if event['type'] == 'measurement':
-                readings.append(event['data'])
-        assert readings[0]['timestamp'] != readings[1]['timestamp']
-        assert all(r['source'] == 'demo' for r in readings)
-        print('PASS: real WebSocket delivers changing, labelled demo measurements')
+                readings[event['data']['battery_id']] = event['data']
+        assert set(readings) == {'BATTERY_1','BATTERY_2'}
+        assert all(r['source'] == 'demo' for r in readings.values())
+        print('PASS: real WebSocket delivers separate, labelled readings for both demo batteries')
 
 
 def main():

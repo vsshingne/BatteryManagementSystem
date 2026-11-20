@@ -1,4 +1,4 @@
-"""Deterministic simulation only. Never called by the live serial path."""
+"""Deterministic development simulation only; never used in live mode."""
 import math
 import random
 

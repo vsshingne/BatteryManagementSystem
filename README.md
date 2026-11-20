@@ -1,123 +1,81 @@
-# Energy Supervisory Unit (ESU)
+# Energy Supervisory Unit
 
-Real-Time Battery Monitoring & SOC Estimation  
-Walchand College of Engineering, Sangli · Department of Electronics Engineering
+Responsive dual battery monitoring dashboard for the pipeline **ATtiny1604 sensing → STM32 processing/SOC/supervision → ESP32 UART/Wi-Fi bridge → FastAPI → React**. Each battery has isolated readings, freshness, history, charts and alerts. The gateway does not calculate SOC or claim physical protection.
 
-A React/TypeScript dashboard and FastAPI gateway for the ATtiny1604 → STM32 → Raspberry Pi battery monitoring pipeline. STM32 remains the source of SOC and battery status. The application has no charge/discharge control endpoints or UART write commands.
+## Run locally (PowerShell)
 
-## Start on your Windows laptop
-
-Prerequisites: Python 3.11+ and Node.js 22 LTS with npm. Run from the project root in PowerShell:
+Prerequisites: Python 3.11+ and Node.js 20+. From the repository root:
 
 ```powershell
 Copy-Item .env.example .env
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-cd frontend
+Push-Location frontend
 npm ci
 npm run build
-cd ..
+Pop-Location
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
 ```
 
-Open **http://127.0.0.1:8000**. FastAPI serves both the production dashboard and its API. Default mode is **DEMO**; values and events are prominently marked simulated. No hardware is needed. Use Ctrl+C to stop.
+Open http://127.0.0.1:8000. Default `MODE=demo` runs an explicitly labelled dual simulator; no simulated value is presented as a hardware reading. Stop with Ctrl+C. For Vite hot reload, run the backend in one terminal and `cd frontend; npm run dev` in another.
 
-For Linux setup and automatic startup, follow [Raspberry Pi deployment](docs/raspberry_pi_setup.md).
+## Modes
 
-## Dashboard
+`MODE=demo` is development only. It creates two distinct demo sources and hardware ingest returns 409. Demo history is memory-only unless `PERSIST_DEMO=true`.
 
-- **Overview:** SOC gauge, operating mode, runtime when supplied, parameter cards, four rolling charts, connection status and active notifications.
-- **Live Analytics:** selectable 1/5/15/60-minute windows and voltage/current comparison with independent axes. The in-browser buffer starts when the page opens and retains up to 3,600 samples for one hour; no invented backfill.
-- **Battery History:** SQLite records filtered by source and optional local date/time bounds. Statistics, graphs and CSV cover the most recent 10,000 matching records at most. The table displays the latest 200 of that selection. Narrow the date range for older records. Export uses the last loaded filters.
-- **Alerts & Events:** most recent 500 events for the configured mode, with active/resolved state, source, severity and acknowledgement. Acknowledgement does not clear a fault.
-- **System Information:** gateway, serial, STM32 and WebSocket status; configuration and rejected-packet count.
-
-All server timestamps are UTC; the browser displays them in the viewer's local timezone. Last known values remain visible after a disconnect, marked stale. No-data is displayed as a dash, never zero SOC.
-
-## Demo and hardware modes
-
-Edit the root `.env`, then restart the backend. Settings are read at process startup, not from the browser.
-
-```dotenv
-MODE=demo
-PERSIST_DEMO=false
-DEMO_INTERVAL_SECONDS=1
-DEMO_SEED=42
-```
-
-The deterministic simulator cycles through discharging, idle and charging over 240 samples, including a clearly simulated overtemperature event at samples 85–94. By default, demo measurements are **not stored**, and demo event history is in memory only. To exercise historical analytics, set `PERSIST_DEMO=true`, restart, wait for readings, select **Simulated** on Battery History and click **Load history**. Persisted demo records are tagged `source=demo` and never returned as hardware data.
-
-For actual hardware:
+For the ESP32 link, configure `.env`:
 
 ```dotenv
 MODE=live
-SERIAL_PORT=/dev/ttyUSB0
-BAUD_RATE=115200
-PROTOCOL=jsonl
-STALE_AFTER_SECONDS=5
+STALE_AFTER_SECONDS=10
+INGEST_TOKEN=replace-with-a-long-random-secret
 ```
 
-Windows serial ports such as `COM3` and Pi direct UART `/dev/serial0` are also configurable. There is **no simulation fallback** in live mode. The port is retried after disconnection. A valid packet must arrive within the stale timeout; an open port alone is not a healthy connection. Select a timeout comfortably larger than the firmware's transmission interval. Run **one Uvicorn worker**, so only one process owns UART and the simulator.
+Restart the backend after changing settings. Live mode does not synthesize readings. The ESP32 posts to `http://<backend-host>:8000/api/ingest`. Set its server URL, Wi-Fi credentials, bearer token, device ID, UART pins, UART baud and timeouts in `firmware/esp32_gateway/hardware_config.h` (copy the `.example.h`). UART pins and baud must match the actual board and firmware; no physical configuration has been assumed.
 
-See [the communication contract](docs/communication_protocol.md) before connecting firmware. JSONL is the implemented protocol; `PROTOCOL` selects the parser and rejects unsupported adapters at startup. Add a parser/transport adapter if the firmware chooses a different framing format. No assumption is made that firmware is finalized.
+## ESP32 firmware and hardware
 
-Optional voltage/current/temperature notification thresholds are disabled by default. Configure them for the actual battery in `.env` if needed. They generate separately labelled gateway notifications and never override STM32 status or SOC. Parser plausibility limits are broad data-validation bounds, **not battery protection thresholds**.
+Install ArduinoJson 7, copy `firmware/esp32_gateway/hardware_config.example.h` to `hardware_config.h`, then configure the actual Wi-Fi/network and STM32/ESP32 UART settings. STM32 sends one JSONL line containing a `batteries` array. The sketch wraps it with `device_id` and HTTP POSTs to FastAPI.
 
-## Development
+For a receive-only telemetry link, connect **STM32 UART TX → configured ESP32 UART RX** and **STM32 GND ↔ ESP32 GND**. Leave ESP32 TX disconnected unless a separately designed return channel is required. Check both board datasheets and measure/confirm the STM32 TX logic level against the selected ESP32 input tolerance; add a suitable level translator when needed. Power each board from its specified supply. Configure UART pins, peripheral, baud, framing and timeouts only after confirming the exact board variants and STM32 firmware settings. Confirm the STM32 → ESP32 JSONL schema in `docs/communication_protocol.md` before wiring. Physical validation and SOC calibration remain outstanding until tested with the actual boards; SOC algorithm outputs remain the STM32's responsibility.
 
-Start the backend as above. In a second terminal:
+## Simulated ESP32 sender
+
+With the backend running in `MODE=live`, use a second PowerShell terminal:
 
 ```powershell
-cd frontend
-npm run dev
+$env:BMS_INGEST_URL = 'http://127.0.0.1:8000/api/ingest'
+$env:BMS_INGEST_TOKEN = 'replace-with-a-long-random-secret'
+.\.venv\Scripts\python.exe scripts\simulate_esp32.py
 ```
 
-Open the URL printed by Vite (normally http://localhost:5173). Vite proxies `/api` and `/ws` to port 8000, avoiding separate browser API configuration. `npm run preview` alone serves only static files; use FastAPI or the Vite development proxy for a complete application.
-
-## Tests and production build
-
-```powershell
-cd backend
-..\.venv\Scripts\python.exe -m pytest -q
-cd ..\frontend
-npm run build
-```
-
-Tests cover strict parsing, malformed/nonfinite/out-of-range input, bounded UART framing, mock serial reconnection, deterministic simulation, WebSocket updates, source isolation, persistence, CSV/time filters, stale communications, configured thresholds, fault preservation across restarts, notification acknowledgement and static serving.
-
-A separate smoke check launches a real local server on a free port, serves the built UI, receives WebSocket updates, retrieves SQLite history and exports CSV, then stops its server:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\smoke_check.py
-```
+The sender posts clearly synthetic fixtures for both battery IDs. It exercises HTTP ingest only; it does not validate physical UART or Wi-Fi hardware. Omit `BMS_INGEST_TOKEN` when `INGEST_TOKEN` is unset.
 
 ## API
 
-Interactive API schema: http://127.0.0.1:8000/docs
+- `POST /api/ingest` validates ESP32 batch JSON; live mode only.
+- `GET /api/system` and `/api/health` report ESP32 connectivity and per-battery freshness.
+- `GET /api/batteries` returns both latest readings; `GET /api/latest?battery_id=BATTERY_1` returns one.
+- `GET /api/history?battery_id=BATTERY_1&source=live` queries independent history; optional timezone-aware `start`, `end`, `limit`.
+- `GET /api/export` exports filtered CSV; `GET /api/alerts?battery_id=BATTERY_2` returns battery-specific alerts.
+- `POST /api/alerts/{id}/acknowledge` acknowledges only the event.
+- `WS /ws/battery` broadcasts tagged measurement events and status updates.
 
-| Route | Purpose |
-|---|---|
-| `GET /api/health` | Gateway health and current communication state |
-| `GET /api/system` | Mode, host, UART configuration, errors and last reception |
-| `GET /api/latest` | Latest reading in current mode, or `null` |
-| `GET /api/history` | `source`, timezone-aware `start`/`end`, `limit` (1–10,000) |
-| `GET /api/export` | CSV with the same source/time/limit filters |
-| `GET /api/alerts` | Current mode's event log; `limit` (1–500) |
-| `POST /api/alerts/{id}/acknowledge` | Mark a notification acknowledged |
-| `WS /ws/battery` | Measurement events and one-second status events |
+Interactive schema: http://127.0.0.1:8000/docs. Existing single-battery SQLite rows are migrated to `BATTERY_1`; `BATTERY_2` remains empty until actual or demo data arrives.
 
-`/latest` may contain stale data: consumers must consult connection status and timestamps. History defaults to the configured mode. Date ranges are inclusive, results are the newest matching rows returned in chronological order. Date inputs without a timezone are rejected.
+## Verification
 
-## Project layout
-
-```text
-frontend/src/        React UI, charts, telemetry hook and API types
-backend/app/         FastAPI, settings, validation, SQLite, UART, simulator
-backend/tests/       Backend and serial integration tests
-scripts/            Real-server smoke verification
-docs/               Architecture, wire contract and Pi deployment
-deploy/             systemd service template
-.env.example        Runtime configuration template
+```powershell
+Push-Location backend
+..\.venv\Scripts\python.exe -m pytest -q
+Pop-Location
+Push-Location frontend
+npm run build
+Pop-Location
 ```
 
-This deployment targets a trusted local network. There is no user authentication; anyone with network access can view measurements and acknowledge notifications. No public hosting is configured. Hardware protection is not claimed by the dashboard. Disk retention is operator-managed; archive old SQLite data as needed. Physical STM32/Pi validation and browser visual inspection must be performed on the target devices.
+Tests cover dual ingest, strict validation, independent history/freshness, SQLite migration, battery-tagged WebSocket events and demo/live separation. Simulated tests do not constitute physical ESP32/STM32 integration testing.
+
+## Configuration and deployment notes
+
+`.env.example` lists backend settings. For local network access bind Uvicorn to the intended LAN interface; this dashboard has no user accounts. Do not expose it to the public internet without authentication and TLS. Run one backend worker. Database path defaults to `backend/data/esu.sqlite3`; manage retention and backups for your deployment.
